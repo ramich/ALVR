@@ -1,0 +1,91 @@
+name: Build Oculus Go artifacts
+
+on:
+  push:
+    branches: [oculus-go]
+  pull_request:
+    branches: [oculus-go]
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build_client_apk:
+    name: Go client APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 11
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          target: aarch64-linux-android
+          override: true
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK components
+        run: |
+          yes | sdkmanager --licenses || true
+          sdkmanager "platform-tools" "platforms;android-31" "build-tools;32.0.0" "ndk;22.1.7171670"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
+
+      - name: Install Rust Android tools
+        run: cargo install cargo-ndk cbindgen
+
+      - name: Prepare dependencies
+        run: cargo xtask prepare-deps --platform oculus_go
+
+      - name: Build Go client APK
+        run: cargo xtask build-client --release --platform oculus_go
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: alvr_client_oculus_go
+          path: build/alvr_client_oculus_go/alvr_client_oculus_go.apk
+
+  build_server_windows:
+    name: Windows server
+    runs-on: windows-2022
+    env:
+      LIBCLANG_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install toolchain dependencies
+        shell: powershell
+        run: choco install vulkan-sdk wixtoolset zip unzip --no-progress
+
+      - name: Prepare dependencies
+        run: cargo xtask prepare-deps --platform windows --ci
+
+      - name: Package server
+        run: cargo xtask package-server
+
+      - name: Upload portable build
+        uses: actions/upload-artifact@v4
+        with:
+          name: alvr_server_windows_portable
+          path: build/alvr_server_windows.zip
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: alvr_server_windows_installer
+          path: build/ALVR_Installer_*.exe
