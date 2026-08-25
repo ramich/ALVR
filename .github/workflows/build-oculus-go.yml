@@ -40,9 +40,6 @@ jobs:
           $SDKM "platform-tools" "platforms;android-31" "build-tools;32.0.0" "ndk;22.1.7171670"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
 
-      - name: Install Rust Android tools
-        run: cargo install cargo-ndk cbindgen
-
       - name: Prepare dependencies
         run: cargo xtask prepare-deps --platform oculus_go
 
