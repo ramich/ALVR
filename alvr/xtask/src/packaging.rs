@@ -71,7 +71,7 @@ pub fn package_server(root: Option<String>, gpl: bool) {
     }
 
     // Gather licenses with cargo about
-    cmd!(sh, "cargo install cargo-about").run().unwrap();
+    cmd!(sh, "cargo +stable install cargo-about --version 0.5.1").run().unwrap();
     let licenses_template = afs::crate_dir("xtask").join("licenses_template.hbs");
     let licenses_content = cmd!(sh, "cargo about generate {licenses_template}")
         .read()
