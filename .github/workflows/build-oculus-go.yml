@@ -33,8 +33,9 @@ jobs:
 
       - name: Install SDK components
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-31" "build-tools;32.0.0" "ndk;22.1.7171670"
+          SDKM=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+          yes | $SDKM --licenses || true
+          $SDKM "platform-tools" "platforms;android-31" "build-tools;32.0.0" "ndk;22.1.7171670"
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/22.1.7171670" >> $GITHUB_ENV
 
       - name: Install Rust Android tools
@@ -56,7 +57,7 @@ jobs:
     name: Windows server
     runs-on: windows-2022
     env:
-      LIBCLANG_PATH: 'C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\Llvm\x64\bin'
+      LIBCLANG_PATH: 'C:\Program Files\LLVM\bin'
     steps:
       - uses: actions/checkout@v4
 
@@ -69,7 +70,7 @@ jobs:
 
       - name: Install toolchain dependencies
         shell: powershell
-        run: choco install vulkan-sdk wixtoolset zip unzip --no-progress
+        run: choco install llvm --version=12.0.1 vulkan-sdk wixtoolset zip unzip --no-progress
 
       - name: Prepare dependencies
         run: cargo xtask prepare-deps --platform windows --ci
