@@ -18,6 +18,11 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: actions/setup-java@v4
         id: jdk11
         with:
           distribution: temurin
@@ -45,7 +50,11 @@ jobs:
         run: cargo xtask prepare-deps --platform oculus_go
 
       - name: Build Go client APK
-        run: cargo xtask build-client --release --platform oculus_go
+        env:
+          JAVA_HOME: ${{ steps.jdk11.outputs.path }}
+        run: |
+          export PATH="$JAVA_HOME/bin:$PATH"
+          cargo xtask build-client --release --platform oculus_go
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -70,7 +79,9 @@ jobs:
 
       - name: Install toolchain dependencies
         shell: powershell
-        run: choco install llvm --version=12.0.1 vulkan-sdk wixtoolset zip unzip --no-progress
+        run: |
+          choco install llvm --version=12.0.1 --allow-downgrade --no-progress
+          choco install vulkan-sdk wixtoolset zip unzip --no-progress
 
       - name: Prepare dependencies
         run: cargo xtask prepare-deps --platform windows --ci
