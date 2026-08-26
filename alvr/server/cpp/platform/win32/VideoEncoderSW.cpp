@@ -346,7 +346,24 @@ void VideoEncoderSW::Transmit(ID3D11Texture2D *pTexture, uint64_t presentationTi
 
 		// Send encoded frame to client
 		std::vector<uint8_t> encoded_data;
-		filter_NAL(packet->data, packet->size, encoded_data);
+		if (m_isQsv && (packet->flags & AV_PKT_FLAG_KEY)) {
+			// QSV emits SPS/PPS only on the first keyframe; cache them and
+			// re-inject on every IDR so older decoders (e.g. the Go) can
+			// reconfigure when ALVR requests a periodic keyframe.
+			if (m_spsPpsCache.empty()) {
+				cache_sps_pps(packet->data, packet->size);
+			}
+			if (!m_spsPpsCache.empty()) {
+				std::vector<uint8_t> withHeader;
+				withHeader.insert(withHeader.end(), m_spsPpsCache.begin(), m_spsPpsCache.end());
+				withHeader.insert(withHeader.end(), packet->data, packet->data + packet->size);
+				filter_NAL(withHeader.data(), withHeader.size(), encoded_data);
+			} else {
+				filter_NAL(packet->data, packet->size, encoded_data);
+			}
+		} else {
+			filter_NAL(packet->data, packet->size, encoded_data);
+		}
 		m_Listener->SendVideo(encoded_data.data(), encoded_data.size(), packet->pts);
 		av_packet_free(&packet);
 		//Debug("Sent encoded packet to client");

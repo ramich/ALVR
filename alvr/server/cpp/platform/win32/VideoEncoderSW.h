@@ -35,6 +35,7 @@ public:
 	bool should_keep_nal_h264(const uint8_t *header_start);
 	bool should_keep_nal_h265(const uint8_t *header_start);
 	void filter_NAL(const uint8_t *input, size_t input_size, std::vector<uint8_t> &out);
+	void cache_sps_pps(const uint8_t *input, size_t input_size);
 
 	AVCodecID ToFFMPEGCodec(ALVR_CODEC codec);
 
