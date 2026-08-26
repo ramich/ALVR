@@ -25,7 +25,7 @@ use alvr_sockets::{
     BatteryPacket, ClientControlPacket, ClientStatistics, DeviceMotion, HeadsetInfoPacket,
     Tracking, ViewsConfig,
 };
-use jni::objects::{GlobalRef, ReleaseMode};
+use jni::objects::{GlobalRef, JObject, ReleaseMode};
 use statistics::StatisticsManager;
 use std::{
     collections::VecDeque,
@@ -404,7 +404,7 @@ pub unsafe extern "C" fn alvr_wait_for_frame() -> i64 {
             .unwrap()
             .j()
             .unwrap();
-        env.pop_local_frame().unwrap();
+        env.pop_local_frame(JObject::null()).unwrap();
 
         result
     } else {
