@@ -404,7 +404,7 @@ pub unsafe extern "C" fn alvr_wait_for_frame() -> i64 {
             .unwrap()
             .j()
             .unwrap();
-        env.pop_local_frame(&frame).unwrap();
+        env.pop_local_frame(frame).unwrap();
 
         result
     } else {
