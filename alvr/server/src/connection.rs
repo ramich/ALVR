@@ -27,7 +27,10 @@ use std::{
     net::IpAddr,
     process::Command,
     str::FromStr,
-    sync::{mpsc as smpsc, Arc},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc as smpsc, Arc,
+    },
     thread,
     time::Duration,
 };
@@ -35,6 +38,8 @@ use tokio::{
     sync::{mpsc as tmpsc, Mutex},
     time,
 };
+
+static HANDSHAKE_ATTEMPT_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(windows)]
 use alvr_session::{OpenvrPropValue, OpenvrPropertyKey};
@@ -551,8 +556,13 @@ async fn connection_pipeline() -> StrResult {
                         break connection_info;
                     }
                     Either::Right(Err(e)) => {
-                        // do not treat handshake problems as an hard error
-                        warn!("Handshake: {e}");
+                        // do not treat handshake problems as an hard error.
+                        // Throttle: while waiting for a client this fires every
+                        // second and would flood the dashboard log.
+                        HANDSHAKE_ATTEMPT_COUNT.fetch_add(1, Ordering::Relaxed);
+                        if HANDSHAKE_ATTEMPT_COUNT.load(Ordering::Relaxed) % 30 == 1 {
+                            warn!("Handshake: {e}");
+                        }
                         return Ok(());
                     }
                 }
