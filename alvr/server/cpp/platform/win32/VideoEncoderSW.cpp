@@ -139,12 +139,12 @@ void VideoEncoderSW::Initialize() {
 		m_codecContext->sample_aspect_ratio = AVRational{1, 1};
 		m_isQsv = qsv;
 		if (qsv) {
-			// QSV accepts system-memory NV12 (P010 for 10-bit HEVC); note that
-			// H.264 over QSV is always 8-bit.
-			m_codecContext->pix_fmt =
-				(m_codec == ALVR_CODEC_H265 && Settings::Instance().m_use10bitEncoder)
-					? AV_PIX_FMT_P010LE
-					: AV_PIX_FMT_NV12;
+			// The encoder receives QSV hardware frames; we upload system NV12
+			// (P010 for 10-bit HEVC) into them ourselves, so the encoder's input
+			// pixel format is QSV. The actual memory layout is defined by the
+			// hw_frames_ctx built after avcodec_open2. The new oneVPL runtime
+			// rejects system-memory frames (EINVAL / -22) unless we do this.
+			m_codecContext->pix_fmt = AV_PIX_FMT_QSV;
 		} else {
 			m_codecContext->pix_fmt = Settings::Instance().m_use10bitEncoder ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
 		}
@@ -169,11 +169,46 @@ void VideoEncoderSW::Initialize() {
 		// Config transfer/encode frames
 		m_transferredFrame = av_frame_alloc();
 		m_transferredFrame->buf[0] = av_buffer_alloc(1);
-		m_encoderFrame = av_frame_alloc();
-		m_encoderFrame->width = encWidth;
-		m_encoderFrame->height = encHeight;
-		m_encoderFrame->format = m_codecContext->pix_fmt;
-		if((err = av_frame_get_buffer(m_encoderFrame, 0))) throw MakeException("Error when allocating encoder frame: %d", err);
+
+		if (qsv) {
+			// Build a QSV hardware-frame pool. Each sws-scaled system NV12 frame
+			// is uploaded into one of these surfaces before being sent; modern
+			// oneVPL drivers require hardware frames and reject system memory.
+			AVBufferRef *hwFrames = av_hwframe_ctx_alloc(m_hwDeviceCtx);
+			AVHWFramesContext *fr = (AVHWFramesContext *)hwFrames->data;
+			fr->format = AV_PIX_FMT_QSV;
+			fr->sw_format = (m_codec == ALVR_CODEC_H265 && Settings::Instance().m_use10bitEncoder)
+				? AV_PIX_FMT_P010LE
+				: AV_PIX_FMT_NV12;
+			fr->width = encWidth;
+			fr->height = encHeight;
+			fr->initial_pool_size = 16;
+			if ((err = av_hwframe_ctx_init(hwFrames)) < 0)
+				throw MakeException("Error initializing QSV hw frames: %d", err);
+			m_hwFramesCtx = hwFrames;
+			m_codecContext->hw_frames_ctx = av_buffer_ref(hwFrames);
+
+			m_encoderFrame = av_frame_alloc();
+			m_encoderFrame->format = AV_PIX_FMT_QSV;
+			m_encoderFrame->hw_frames_ctx = av_buffer_ref(m_hwFramesCtx);
+			m_encoderFrame->width = encWidth;
+			m_encoderFrame->height = encHeight;
+			if ((err = av_hwframe_get_buffer(m_encoderFrame, 0)))
+				throw MakeException("Error allocating QSV encoder frame: %d", err);
+
+			m_swFrame = av_frame_alloc();
+			m_swFrame->format = fr->sw_format;
+			m_swFrame->width = encWidth;
+			m_swFrame->height = encHeight;
+			if ((err = av_frame_get_buffer(m_swFrame, 0)))
+				throw MakeException("Error allocating sw frame: %d", err);
+		} else {
+			m_encoderFrame = av_frame_alloc();
+			m_encoderFrame->width = encWidth;
+			m_encoderFrame->height = encHeight;
+			m_encoderFrame->format = m_codecContext->pix_fmt;
+			if((err = av_frame_get_buffer(m_encoderFrame, 0))) throw MakeException("Error when allocating encoder frame: %d", err);
+		}
 
 		Debug("Successfully initialized VideoEncoderSW");
 		return;
@@ -187,10 +222,12 @@ void VideoEncoderSW::Shutdown() {
 
 	av_frame_free(&m_transferredFrame);
 	av_frame_free(&m_encoderFrame);
+	av_frame_free(&m_swFrame);
 
 	avcodec_free_context(&m_codecContext);
 	sws_freeContext(m_scalerContext);
 	m_scalerContext = nullptr;
+	if (m_hwFramesCtx) av_buffer_unref(&m_hwFramesCtx);
 
 	Debug("Successfully shutdown VideoEncoderSW.\n");
 }
@@ -288,11 +325,18 @@ void VideoEncoderSW::Transmit(ID3D11Texture2D *pTexture, uint64_t presentationTi
 	}
 	//Debug("Success in mapping staging texture");
 
+	int err;
+
 	// Setup software scaler if not defined yet; we can only define it here as we now have the texture's size
 	// FIXME: Hardcoded to DirectX's R8G8B8A8, make more robust system if needed
 	if(!m_scalerContext) {
+		// sws always writes to a system-memory frame; for QSV that is the
+		// intermediate NV12 (P010) frame we then upload into a QSV surface.
+		AVPixelFormat swsDstFormat = m_isQsv
+			? ((m_codec == ALVR_CODEC_H265 && Settings::Instance().m_use10bitEncoder) ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12)
+			: m_codecContext->pix_fmt;
 		m_scalerContext = sws_getContext(stagingTexDesc.Width, stagingTexDesc.Height, AV_PIX_FMT_RGBA,
-		m_codecContext->width, m_codecContext->height, m_codecContext->pix_fmt,
+		m_codecContext->width, m_codecContext->height, swsDstFormat,
 		SWS_BILINEAR, NULL, NULL, NULL);
 		if(!m_scalerContext) {
 			Error("Couldn't initialize SWScaler.");
@@ -311,8 +355,9 @@ void VideoEncoderSW::Transmit(ID3D11Texture2D *pTexture, uint64_t presentationTi
 	m_transferredFrame->pts = targetTimestampNs;
 
 	// Use SWScaler for scaling
+	AVFrame *swsDst = m_isQsv ? m_swFrame : m_encoderFrame;
 	if(sws_scale(m_scalerContext, m_transferredFrame->data, m_transferredFrame->linesize,
-				0, m_transferredFrame->height, m_encoderFrame->data, m_encoderFrame->linesize) == 0) {
+				0, m_transferredFrame->height, swsDst->data, swsDst->linesize) == 0) {
 		Error("SWScale failed.");
 		m_d3dRender->GetContext()->Unmap(stagingTex.Get(), 0);
 		return;
@@ -320,10 +365,18 @@ void VideoEncoderSW::Transmit(ID3D11Texture2D *pTexture, uint64_t presentationTi
 	//Debug("SWScale succeeded.");
 
 	// Send frame for encoding
+	if (m_isQsv) {
+		// Upload the sws output into a QSV hardware surface. Modern oneVPL
+		// rejects system-memory frames (EINVAL / -22).
+		if ((err = av_hwframe_transfer_data(m_encoderFrame, m_swFrame, 0)) < 0) {
+			Error("QSV frame upload failed: err code %d", err);
+			m_d3dRender->GetContext()->Unmap(stagingTex.Get(), 0);
+			return;
+		}
+	}
 	m_encoderFrame->pict_type = insertIDR ? AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_NONE;
 	m_encoderFrame->pts = targetTimestampNs;
 
-	int err;
 	if((err = avcodec_send_frame(m_codecContext, m_encoderFrame)) < 0) {
 		Error("Encoding frame failed: err code %d", err);
 		m_d3dRender->GetContext()->Unmap(stagingTex.Get(), 0);

@@ -48,7 +48,8 @@ private:
 
 	AVCodecContext *m_codecContext;
 	AVBufferRef *m_hwDeviceCtx = nullptr;
-	AVFrame *m_transferredFrame, *m_encoderFrame;
+	AVBufferRef *m_hwFramesCtx = nullptr;
+	AVFrame *m_transferredFrame, *m_encoderFrame, *m_swFrame = nullptr;
 	SwsContext *m_scalerContext = nullptr;
 
 	ComPtr<ID3D11Texture2D> stagingTex;
