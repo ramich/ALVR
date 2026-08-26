@@ -22,7 +22,11 @@ void OvrDirectModeComponent::CreateSwapTextureSet(uint32_t unPid, const SwapText
 	D3D11_TEXTURE2D_DESC SharedTextureDesc = {};
 	SharedTextureDesc.ArraySize = 1;
 	SharedTextureDesc.MipLevels = 1;
-	SharedTextureDesc.SampleDesc.Count = pSwapTextureSetDesc->nSampleCount;
+	// Force a single sample. SteamVR's compositor requests 8x MSAA for this
+	// shared texture, but the Intel Iris Plus driver cannot compile the 8x
+	// MSAA resolve shader (CRenderDeviceDx11:GetResolvePixelShade error) and
+	// the extra samples are wasted on a frame that is re-encoded to H.264 anyway.
+	SharedTextureDesc.SampleDesc.Count = 1;
 	SharedTextureDesc.SampleDesc.Quality = 0;
 	SharedTextureDesc.Usage = D3D11_USAGE_DEFAULT;
 	SharedTextureDesc.Format = (DXGI_FORMAT)pSwapTextureSetDesc->nFormat;

@@ -134,6 +134,7 @@ void VideoEncoderSW::Initialize() {
 		m_codecContext->time_base = AVRational{1, (int)(1e9)};
 		m_codecContext->framerate = AVRational{Settings::Instance().m_refreshRate, 1};
 		m_codecContext->sample_aspect_ratio = AVRational{1, 1};
+		m_isQsv = qsv;
 		if (qsv) {
 			// QSV accepts system-memory NV12 (P010 for 10-bit HEVC); note that
 			// H.264 over QSV is always 8-bit.
@@ -227,6 +228,32 @@ void VideoEncoderSW::filter_NAL(const uint8_t *input, size_t input_size, std::ve
 		out.insert(out.end(), header_start, next_header);
 		if (codec == ALVR_CODEC_H265 && should_keep_nal_h265(header_start))
 		out.insert(out.end(), header_start, next_header);
+		header_start = next_header;
+	}
+}
+
+// Pull the stream headers (SPS/PPS, plus VPS for HEVC) out of the first
+// keyframe so they can be re-injected on later keyframes. Stops at the first
+// coded slice.
+void VideoEncoderSW::cache_sps_pps(const uint8_t *input, size_t input_size)
+{
+	if (input_size < 4) return;
+	std::array<uint8_t, 3> header = {{0, 0, 1}};
+	const uint8_t *end = input + input_size;
+	const uint8_t *header_start = input;
+	while (header_start != end) {
+		const uint8_t *next_header = std::search(header_start + 3, end, header.begin(), header.end());
+		if (next_header != end && next_header[-1] == 0) next_header--;
+		uint8_t nal_type = header_start[3] & 0x1F;
+		bool is_header = (m_codec == ALVR_CODEC_H264)
+			? (nal_type == 7 || nal_type == 8)
+			: (nal_type == 32 || nal_type == 33 || nal_type == 34);
+		if (is_header) {
+			m_spsPpsCache.insert(m_spsPpsCache.end(), header_start, next_header);
+		} else if (nal_type == 1 || nal_type == 5 || (m_codec == ALVR_CODEC_H265 && nal_type <= 21)) {
+			// first coded slice -> headers are complete
+			break;
+		}
 		header_start = next_header;
 	}
 }

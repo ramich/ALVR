@@ -59,6 +59,12 @@ private:
 	int m_renderWidth;
 	int m_renderHeight;
 	int m_bitrateInMBits;
+
+	// Set when the active encoder is Intel QuickSync. QSV emits SPS/PPS only
+	// once at stream start (unlike x264, which repeats them on every IDR), so
+	// we cache them and re-inject on each keyframe for older decoders.
+	bool m_isQsv = false;
+	std::vector<uint8_t> m_spsPpsCache;
 };
 
 #endif // ALVR_GPL
