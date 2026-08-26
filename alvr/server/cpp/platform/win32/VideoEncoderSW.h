@@ -10,6 +10,7 @@
 
 extern "C" {
 	#include <libavutil/avutil.h>
+	#include <libavutil/hwcontext.h>
 	#include <libavcodec/avcodec.h>
 	#include <libavformat/avformat.h>
 	#include <libswscale/swscale.h>
@@ -45,6 +46,7 @@ private:
 	std::shared_ptr<ClientConnection> m_Listener;
 
 	AVCodecContext *m_codecContext;
+	AVBufferRef *m_hwDeviceCtx = nullptr;
 	AVFrame *m_transferredFrame, *m_encoderFrame;
 	SwsContext *m_scalerContext = nullptr;
 

@@ -44,7 +44,11 @@ VideoEncoderSW::VideoEncoderSW(std::shared_ptr<CD3DRender> d3dRender
 #endif
 	}
 
-VideoEncoderSW::~VideoEncoderSW() {}
+VideoEncoderSW::~VideoEncoderSW() {
+	if (m_hwDeviceCtx) {
+		av_buffer_unref(&m_hwDeviceCtx);
+	}
+}
 
 void VideoEncoderSW::LibVALog(void* v, int level, const char* data, va_list va) {
 	const char* prefix = "[libav]: ";
@@ -72,6 +76,21 @@ void VideoEncoderSW::Initialize() {
 		// Initialize CodecContext
 		m_codecContext = avcodec_alloc_context3(codec);
 		if(m_codecContext == NULL) throw MakeException("Failed to allocate encoder id %d", codec->id);
+
+		// QSV needs a hardware device context to upload the system-memory frames
+		// we feed it. ffmpeg's CLI creates this automatically; library users must
+		// do it explicitly, otherwise every avcodec_send_frame() returns EINVAL
+		// (no encoded output -> client shows a green/garbage frame).
+		if (qsv) {
+			AVBufferRef *hwDevice = nullptr;
+			if (av_hwdevice_ctx_create(&hwDevice, AV_HWDEVICE_TYPE_QSV, "auto", nullptr, 0) < 0) {
+				Debug("Failed to create QSV hardware device, falling back to software encoding.");
+				av_buffer_unref(&hwDevice);
+				continue;
+			}
+			m_hwDeviceCtx = hwDevice;
+			m_codecContext->hw_device_ctx = av_buffer_ref(hwDevice);
+		}
 
 		// Set codec settings
 		AVDictionary* opt = NULL;
@@ -105,8 +124,13 @@ void VideoEncoderSW::Initialize() {
 			}
 		}
 
-		m_codecContext->width = Settings::Instance().m_renderWidth;
-		m_codecContext->height = Settings::Instance().m_renderHeight;
+		// QSV requires the encode dimensions to be a multiple of 16; round down
+		// to be safe (x264 tolerates arbitrary sizes, so leave those alone).
+		int encWidth = qsv ? ((Settings::Instance().m_renderWidth + 15) & ~15) : Settings::Instance().m_renderWidth;
+		int encHeight = qsv ? ((Settings::Instance().m_renderHeight + 15) & ~15) : Settings::Instance().m_renderHeight;
+
+		m_codecContext->width = encWidth;
+		m_codecContext->height = encHeight;
 		m_codecContext->time_base = AVRational{1, (int)(1e9)};
 		m_codecContext->framerate = AVRational{Settings::Instance().m_refreshRate, 1};
 		m_codecContext->sample_aspect_ratio = AVRational{1, 1};
@@ -142,8 +166,8 @@ void VideoEncoderSW::Initialize() {
 		m_transferredFrame = av_frame_alloc();
 		m_transferredFrame->buf[0] = av_buffer_alloc(1);
 		m_encoderFrame = av_frame_alloc();
-		m_encoderFrame->width = Settings::Instance().m_renderWidth;
-		m_encoderFrame->height = Settings::Instance().m_renderHeight;
+		m_encoderFrame->width = encWidth;
+		m_encoderFrame->height = encHeight;
 		m_encoderFrame->format = m_codecContext->pix_fmt;
 		if((err = av_frame_get_buffer(m_encoderFrame, 0))) throw MakeException("Error when allocating encoder frame: %d", err);
 
