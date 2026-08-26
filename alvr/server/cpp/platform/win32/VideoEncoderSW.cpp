@@ -63,13 +63,14 @@ void VideoEncoderSW::Initialize() {
 
 	if(!ToFFMPEGCodec(m_codec)) throw MakeException("Invalid requested codec %d", m_codec);
 
-	// Try software (libx264/libx265) first: it is reliable on every machine
-	// and decodes correctly on the Oculus Go's legacy MediaCodec. Intel
-	// QuickSync (h264_qsv/hevc_qsv) is kept only as a fallback; its bitstream
-	// is currently not accepted by the Go's decoder (green screen, no errors),
-	// so it is not preferred until that is resolved.
+	// Try the Intel QuickSync hardware encoder first: it ships inside the
+	// bundled ffmpeg libraries and only requires installed Intel graphics
+	// drivers. Fall back to pure software encoding when unavailable. Note:
+	// an up-to-date Intel driver is required for the ffmpeg oneVPL runtime to
+	// produce a decodable stream (older drivers can yield a green screen on
+	// the client).
 	for (int pass = 0; pass < 2; ++pass) {
-		bool qsv = pass == 1;
+		bool qsv = pass == 0;
 		const AVCodec *codec = qsv
 			? avcodec_find_encoder_by_name(m_codec == ALVR_CODEC_H265 ? "hevc_qsv" : "h264_qsv")
 			: avcodec_find_encoder(ToFFMPEGCodec(m_codec));
