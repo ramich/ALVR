@@ -87,7 +87,7 @@ jobs:
         run: cargo xtask prepare-deps --platform windows --ci
 
       - name: Package server
-        run: cargo xtask package-server
+        run: cargo xtask package-server --gpl
 
       - name: Upload portable build
         uses: actions/upload-artifact@v4
