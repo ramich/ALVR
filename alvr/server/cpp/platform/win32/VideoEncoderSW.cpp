@@ -12,6 +12,21 @@
 #include <array>
 #include <algorithm>
 
+// FFmpeg 6 renamed the FF_PROFILE_* macros to AV_PROFILE_*; keep the old names
+// so this 2022-era source compiles against newer ffmpeg headers.
+#ifndef FF_PROFILE_H264_HIGH_10
+#define FF_PROFILE_H264_HIGH_10 AV_PROFILE_H264_HIGH_10
+#endif
+#ifndef FF_PROFILE_H264_HIGH
+#define FF_PROFILE_H264_HIGH AV_PROFILE_H264_HIGH
+#endif
+#ifndef FF_PROFILE_HEVC_MAIN_10
+#define FF_PROFILE_HEVC_MAIN_10 AV_PROFILE_HEVC_MAIN_10
+#endif
+#ifndef FF_PROFILE_HEVC_MAIN
+#define FF_PROFILE_HEVC_MAIN AV_PROFILE_HEVC_MAIN
+#endif
+
 VideoEncoderSW::VideoEncoderSW(std::shared_ptr<CD3DRender> d3dRender
 	, std::shared_ptr<ClientConnection> listener
 	, int width, int height)
