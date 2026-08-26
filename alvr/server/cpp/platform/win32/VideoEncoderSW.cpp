@@ -122,7 +122,7 @@ void VideoEncoderSW::Initialize() {
 			throw MakeException("Cannot open video encoder codec: %d", err);
 		}
 
-		Debug("Using %s encoder.", qsv ? "Intel QuickSync" : "software");
+		Info("Using %s encoder.", qsv ? "Intel QuickSync" : "software");
 
 		// Config transfer/encode frames
 		m_transferredFrame = av_frame_alloc();
