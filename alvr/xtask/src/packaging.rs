@@ -99,7 +99,12 @@ pub fn package_server(root: Option<String>, gpl: bool) {
         )
         .unwrap();
 
-        build_windows_installer();
+        // Installer is optional: WiX may be unavailable on CI; the portable zip is the primary artifact.
+        if PathBuf::from(r"C:\Program Files (x86)\WiX Toolset v3.11\bin\heat.exe").exists() {
+            build_windows_installer();
+        } else {
+            println!("WiX not found, skipping installer");
+        }
     } else {
         command::targz(&sh, &afs::server_build_dir()).unwrap();
     }
