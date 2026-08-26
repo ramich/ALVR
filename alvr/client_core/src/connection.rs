@@ -169,7 +169,20 @@ async fn connection_pipeline(headset_info: &HeadsetInfoPacket) -> StrResult {
     };
 
     let (mut proto_socket, server_ip) = tokio::select! {
-        res = connection_utils::announce_client_loop(handshake_packet) => {
+        res = async {
+            // Retry announcing internally while no network is available: returning
+            // early would tear down the TCP listener below and break USB (adb
+            // forward) connections.
+            loop {
+                match connection_utils::announce_client_loop(handshake_packet.clone()).await {
+                    Ok(ConnectionError::NetworkUnreachable) => {
+                        info!("Network unreachable");
+                        time::sleep(RETRY_CONNECT_MIN_INTERVAL).await;
+                    }
+                    other => return other,
+                }
+            }
+        } => {
             match res? {
                 ConnectionError::ServerMessage(message) => {
                     info!("Server response: {message:?}");
@@ -181,20 +194,7 @@ async fn connection_pipeline(headset_info: &HeadsetInfoPacket) -> StrResult {
                     set_loading_message(message_str);
                     return Ok(());
                 }
-                ConnectionError::NetworkUnreachable => {
-                    info!("Network unreachable");
-                    set_loading_message(
-                        NETWORK_UNREACHABLE_MESSAGE,
-                    );
-
-                    time::sleep(RETRY_CONNECT_MIN_INTERVAL).await;
-
-                    set_loading_message(
-                        INITIAL_MESSAGE,
-                    );
-
-                    return Ok(());
-                }
+                ConnectionError::NetworkUnreachable => unreachable!(),
             }
         },
         pair = async {
