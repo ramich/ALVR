@@ -395,10 +395,18 @@ pub unsafe extern "C" fn alvr_wait_for_frame() -> i64 {
         let vm = platform::vm();
         let env = vm.get_env().unwrap();
 
-        env.call_method(decoder.as_obj(), "clearAvailable", "()J", &[])
+        // This is called once per rendered frame on a thread that never
+        // detaches from the JVM; without a local frame, each call leaks JNI
+        // local references until the thread's table overflows (max 512).
+        let frame = env.push_local_frame(16).unwrap();
+        let result = env
+            .call_method(decoder.as_obj(), "clearAvailable", "()J", &[])
             .unwrap()
             .j()
-            .unwrap()
+            .unwrap();
+        env.pop_local_frame(&frame).unwrap();
+
+        result
     } else {
         -1
     }
