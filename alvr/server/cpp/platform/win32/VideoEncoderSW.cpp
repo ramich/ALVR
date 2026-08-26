@@ -82,13 +82,27 @@ void VideoEncoderSW::Initialize() {
 			av_dict_set(&opt, "preset", "ultrafast", 0);
 			av_dict_set(&opt, "tune", "zerolatency", 0);
 		}
-		switch (m_codec) {
-			case ALVR_CODEC_H264:
-				m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_H264_HIGH_10 : FF_PROFILE_H264_HIGH;
-				break;
-			case ALVR_CODEC_H265:
-				m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
-				break;
+		if (qsv) {
+			// The profile must match the actual output format: QSV encodes
+			// 8-bit H.264 (NV12 input) and 8/10-bit HEVC (NV12/P010 input).
+			switch (m_codec) {
+				case ALVR_CODEC_H264:
+					m_codecContext->profile = FF_PROFILE_H264_HIGH;
+					break;
+				case ALVR_CODEC_H265:
+					m_codecContext->profile =
+						Settings::Instance().m_use10bitEncoder ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
+					break;
+			}
+		} else {
+			switch (m_codec) {
+				case ALVR_CODEC_H264:
+					m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_H264_HIGH_10 : FF_PROFILE_H264_HIGH;
+					break;
+				case ALVR_CODEC_H265:
+					m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
+					break;
+			}
 		}
 
 		m_codecContext->width = Settings::Instance().m_renderWidth;
