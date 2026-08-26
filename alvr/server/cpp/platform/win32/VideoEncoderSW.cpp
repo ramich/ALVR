@@ -193,7 +193,7 @@ void VideoEncoderSW::Initialize() {
 			m_encoderFrame->hw_frames_ctx = av_buffer_ref(m_hwFramesCtx);
 			m_encoderFrame->width = encWidth;
 			m_encoderFrame->height = encHeight;
-			if ((err = av_hwframe_get_buffer(m_encoderFrame, 0)))
+			if ((err = av_hwframe_get_buffer(m_hwFramesCtx, m_encoderFrame, 0)))
 				throw MakeException("Error allocating QSV encoder frame: %d", err);
 
 			m_swFrame = av_frame_alloc();
