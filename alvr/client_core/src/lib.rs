@@ -136,21 +136,28 @@ pub extern "C" fn alvr_initialize(java_vm: *mut c_void, context: *mut c_void) {
         let vm = platform::vm();
         let env = vm.get_env().unwrap();
 
+        // Called many times per decoded frame on a thread that never detaches
+        // from the JVM; without a local frame, each call leaks JNI local
+        // references until the thread's table overflows (max 512).
+        env.push_local_frame(32).unwrap();
+
         let decoder_lock = DECODER_REF.lock();
 
-        let mut nal = if let Some(decoder) = &*decoder_lock {
-            env.call_method(
-                decoder,
+        if decoder_lock.is_none() {
+            env.pop_local_frame(JObject::null()).unwrap();
+            return;
+        }
+
+        let mut nal = env
+            .call_method(
+                decoder_lock.as_ref().unwrap(),
                 "obtainNAL",
                 "(I)Lcom/polygraphene/alvr/NAL;",
                 &[length.into()],
             )
             .unwrap()
             .l()
-            .unwrap()
-        } else {
-            return;
-        };
+            .unwrap();
 
         if nal.is_null() {
             let nal_class = env.find_class("com/polygraphene/alvr/NAL").unwrap();
@@ -175,15 +182,15 @@ pub extern "C" fn alvr_initialize(java_vm: *mut c_void, context: *mut c_void) {
             jbuffer.commit().unwrap();
         }
 
-        if let Some(decoder) = &*decoder_lock {
-            env.call_method(
-                decoder,
-                "pushNAL",
-                "(Lcom/polygraphene/alvr/NAL;)V",
-                &[nal.into()],
-            )
-            .unwrap();
-        }
+        env.call_method(
+            decoder_lock.as_ref().unwrap(),
+            "pushNAL",
+            "(Lcom/polygraphene/alvr/NAL;)V",
+            &[nal.into()],
+        )
+        .unwrap();
+
+        env.pop_local_frame(JObject::null()).unwrap();
     }
 
     unsafe {
