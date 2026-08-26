@@ -57,52 +57,87 @@ void VideoEncoderSW::Initialize() {
 	int err;
 	Debug("Initializing VideoEncoderSW.\n");
 
-	// Query codec
-	AVCodecID codecId = ToFFMPEGCodec(m_codec);
-	if(!codecId) throw MakeException("Invalid requested codec %d", m_codec);
-	
-	const AVCodec *codec = avcodec_find_encoder(codecId);
-	if(codec == NULL) throw MakeException("Could not find codec id %d", codecId);
+	if(!ToFFMPEGCodec(m_codec)) throw MakeException("Invalid requested codec %d", m_codec);
 
-	// Initialize CodecContext
-	m_codecContext = avcodec_alloc_context3(codec);
-	if(m_codecContext == NULL) throw MakeException("Failed to allocate encoder id %d", codecId);
+	// Try the Intel QuickSync hardware encoder first: it ships inside the
+	// bundled ffmpeg libraries and only requires installed Intel graphics
+	// drivers. Fall back to pure software encoding when unavailable.
+	for (int pass = 0; pass < 2; ++pass) {
+		bool qsv = pass == 0;
+		const AVCodec *codec = qsv
+			? avcodec_find_encoder_by_name(m_codec == ALVR_CODEC_H265 ? "hevc_qsv" : "h264_qsv")
+			: avcodec_find_encoder(ToFFMPEGCodec(m_codec));
+		if (codec == NULL) continue;
 
-	// Set codec settings
-	AVDictionary* opt = NULL;
-	av_dict_set(&opt, "preset", "ultrafast", 0);
-	av_dict_set(&opt, "tune", "zerolatency", 0);
-	switch (m_codec) {
-		case ALVR_CODEC_H264:
-			m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_H264_HIGH_10 : FF_PROFILE_H264_HIGH;
-			break;
-		case ALVR_CODEC_H265:
-			m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
-			break;
+		// Initialize CodecContext
+		m_codecContext = avcodec_alloc_context3(codec);
+		if(m_codecContext == NULL) throw MakeException("Failed to allocate encoder id %d", codec->id);
+
+		// Set codec settings
+		AVDictionary* opt = NULL;
+		if (qsv) {
+			av_dict_set(&opt, "async_depth", "1", 0);
+			av_dict_set(&opt, "idr_interval", "0", 0);
+		} else {
+			av_dict_set(&opt, "preset", "ultrafast", 0);
+			av_dict_set(&opt, "tune", "zerolatency", 0);
+		}
+		switch (m_codec) {
+			case ALVR_CODEC_H264:
+				m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_H264_HIGH_10 : FF_PROFILE_H264_HIGH;
+				break;
+			case ALVR_CODEC_H265:
+				m_codecContext->profile = Settings::Instance().m_use10bitEncoder ? FF_PROFILE_HEVC_MAIN_10 : FF_PROFILE_HEVC_MAIN;
+				break;
+		}
+
+		m_codecContext->width = Settings::Instance().m_renderWidth;
+		m_codecContext->height = Settings::Instance().m_renderHeight;
+		m_codecContext->time_base = AVRational{1, (int)(1e9)};
+		m_codecContext->framerate = AVRational{Settings::Instance().m_refreshRate, 1};
+		m_codecContext->sample_aspect_ratio = AVRational{1, 1};
+		if (qsv) {
+			// QSV accepts system-memory NV12 (P010 for 10-bit HEVC); note that
+			// H.264 over QSV is always 8-bit.
+			m_codecContext->pix_fmt =
+				(m_codec == ALVR_CODEC_H265 && Settings::Instance().m_use10bitEncoder)
+					? AV_PIX_FMT_P010LE
+					: AV_PIX_FMT_NV12;
+		} else {
+			m_codecContext->pix_fmt = Settings::Instance().m_use10bitEncoder ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
+		}
+		m_codecContext->max_b_frames = 0;
+		m_codecContext->bit_rate = Settings::Instance().mEncodeBitrateMBs * 1000 * 1000;
+		m_codecContext->thread_count = Settings::Instance().m_swThreadCount;
+
+		err = avcodec_open2(m_codecContext, codec, &opt);
+		av_dict_free(&opt);
+		if(err) {
+			avcodec_free_context(&m_codecContext);
+			m_codecContext = NULL;
+			if (qsv) {
+				Debug("QuickSync encoder unavailable (err=%d), falling back to software encoding.", err);
+				continue;
+			}
+			throw MakeException("Cannot open video encoder codec: %d", err);
+		}
+
+		Debug("Using %s encoder.", qsv ? "Intel QuickSync" : "software");
+
+		// Config transfer/encode frames
+		m_transferredFrame = av_frame_alloc();
+		m_transferredFrame->buf[0] = av_buffer_alloc(1);
+		m_encoderFrame = av_frame_alloc();
+		m_encoderFrame->width = Settings::Instance().m_renderWidth;
+		m_encoderFrame->height = Settings::Instance().m_renderHeight;
+		m_encoderFrame->format = m_codecContext->pix_fmt;
+		if((err = av_frame_get_buffer(m_encoderFrame, 0))) throw MakeException("Error when allocating encoder frame: %d", err);
+
+		Debug("Successfully initialized VideoEncoderSW");
+		return;
 	}
 
-	m_codecContext->width = Settings::Instance().m_renderWidth;
-	m_codecContext->height = Settings::Instance().m_renderHeight;
-	m_codecContext->time_base = AVRational{1, (int)(1e9)};
-	m_codecContext->framerate = AVRational{Settings::Instance().m_refreshRate, 1};
-	m_codecContext->sample_aspect_ratio = AVRational{1, 1};
-	m_codecContext->pix_fmt = Settings::Instance().m_use10bitEncoder ? AV_PIX_FMT_YUV420P10LE : AV_PIX_FMT_YUV420P;
-	m_codecContext->max_b_frames = 0;
-	m_codecContext->bit_rate = Settings::Instance().mEncodeBitrateMBs * 1000 * 1000;
-	m_codecContext->thread_count = Settings::Instance().m_swThreadCount;
-
-	if((err = avcodec_open2(m_codecContext, codec, &opt))) throw MakeException("Cannot open video encoder codec: %d", err);
-
-	// Config transfer/encode frames
-	m_transferredFrame = av_frame_alloc();
-	m_transferredFrame->buf[0] = av_buffer_alloc(1);
-	m_encoderFrame = av_frame_alloc();
-	m_encoderFrame->width = Settings::Instance().m_renderWidth;
-	m_encoderFrame->height = Settings::Instance().m_renderHeight;
-	m_encoderFrame->format = m_codecContext->pix_fmt;
-	if((err = av_frame_get_buffer(m_encoderFrame, 0))) throw MakeException("Error when allocating encoder frame: %d", err);
-
-	Debug("Successfully initialized VideoEncoderSW");
+	throw MakeException("No usable video encoder found for codec %d", m_codec);
 }
 
 void VideoEncoderSW::Shutdown() {
