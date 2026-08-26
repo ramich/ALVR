@@ -398,13 +398,13 @@ pub unsafe extern "C" fn alvr_wait_for_frame() -> i64 {
         // This is called once per rendered frame on a thread that never
         // detaches from the JVM; without a local frame, each call leaks JNI
         // local references until the thread's table overflows (max 512).
-        let frame = env.push_local_frame(16).unwrap();
+        env.push_local_frame(16).unwrap();
         let result = env
             .call_method(decoder.as_obj(), "clearAvailable", "()J", &[])
             .unwrap()
             .j()
             .unwrap();
-        env.pop_local_frame(frame).unwrap();
+        env.pop_local_frame().unwrap();
 
         result
     } else {
